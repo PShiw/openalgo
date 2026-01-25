@@ -38,14 +38,21 @@ pipeline {
             steps {
                 script {
                     echo "Checking for available ports..."
-                    def ports = sh(script: "python3 find_ports.py", returnStdout: true).trim().split(',')
-                    env.FREE_FLASK_PORT = ports[0]
-                    env.FREE_WS_PORT = ports[1]
-                    env.APP_NAME = "openalgo-${env.FREE_FLASK_PORT}"
-                    env.FLASK_PORT = env.FREE_FLASK_PORT
-                    env.HOST_SERVER = "http://127.0.0.1:${env.FREE_FLASK_PORT}"
-                    
-                    echo "Allocated Ports - Web: ${env.FREE_FLASK_PORT}, WebSocket: ${env.FREE_WS_PORT}"
+                    withEnv(["INPUT_URL=${params.HOST_SERVER}", "FLASK_PORT=${params.FLASK_PORT}"]) {
+                        def ports = sh(script: "python3 find_ports.py", returnStdout: true).trim().split(',')
+                        
+                        env.FREE_FLASK_PORT = ports[0]
+                        env.FREE_WS_PORT = ports[1]
+                        env.HOST_SERVER = ports[2]
+                        
+                        // Create unique container name based on port
+                        env.APP_NAME = "openalgo-${env.FREE_FLASK_PORT}"
+                        
+                        // Override FLASK_PORT for the next stages
+                        env.FLASK_PORT = env.FREE_FLASK_PORT
+                        
+                        echo "Allocated Ports - Web: ${env.FREE_FLASK_PORT}, WebSocket: ${env.FREE_WS_PORT}, Host: ${env.HOST_SERVER}"
+                    }
                 }
             }
         }
@@ -57,9 +64,11 @@ pipeline {
                     sh 'cp .sample.env .env'
                     
                     // Run the Python script to update .env
+                    // It picks up HOST_SERVER and FLASK_PORT from the environment variables set in the previous stage
                     sh 'python3 update_env.py'
                     
                     // Update WebSocket ports in .env
+                    // Update WebSocket ports in .env (since update_env.py doesn't handle these specific keys)
                     sh "sed -i \"s/^WEBSOCKET_PORT=.*/WEBSOCKET_PORT='${env.FREE_WS_PORT}'/\" .env"
                     sh "sed -i \"s|^WEBSOCKET_URL=.*|WEBSOCKET_URL='ws://127.0.0.1:${env.FREE_WS_PORT}'|\" .env"
                 }
@@ -80,6 +89,7 @@ pipeline {
                     
                     // Run new container
                     // Maps dynamic ports
+                    // Maps dynamic ports found in Check Ports stage
                     sh "docker run -d --name ${env.APP_NAME} -p ${env.FREE_FLASK_PORT}:${env.FREE_FLASK_PORT} -p ${env.FREE_WS_PORT}:${env.FREE_WS_PORT} --restart unless-stopped openalgo:${params.BRANCH_NAME}"
                 }
             }
